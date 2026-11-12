@@ -22,6 +22,8 @@
 #define RISCV_CPU_CFG_H
 
 struct RISCVCPUConfig {
+    /* Local research extension; deliberately not an advertised ISA extension. */
+    bool x_pmp_virt;
 #define BOOL_FIELD(x) bool x;
 #define TYPED_FIELD(type, x, default) type x;
 #include "cpu_cfg_fields.h.inc"

@@ -332,7 +332,7 @@ static bool pmp_hart_has_privs_default(CPURISCVState *env, pmp_priv_t privs,
  */
 bool pmp_hart_has_privs(CPURISCVState *env, hwaddr addr,
                         target_ulong size, pmp_priv_t privs,
-                        pmp_priv_t *allowed_privs, target_ulong mode)
+                        pmp_priv_t *allowed_privs, target_ulong mode, bool virt)
 {
     int i = 0;
     int pmp_size = 0;
@@ -392,6 +392,16 @@ bool pmp_hart_has_privs(CPURISCVState *env, hwaddr addr,
                 *allowed_privs = PMP_READ | PMP_WRITE | PMP_EXEC;
                 if ((mode != PRV_M) || pmp_is_locked(env, i)) {
                     *allowed_privs &= env->pmp_state.pmp[i].cfg_reg;
+                }
+                /*
+                 * Grant delegated RWX only to the effective lower context.
+                 * Return those same permissions for the TLB fill. M-mode,
+                 * including locked entries, retains its original semantics.
+                 */
+                if (riscv_cpu_cfg(env)->x_pmp_virt && mode != PRV_M &&
+                    (mode == PRV_U || virt) &&
+                    (env->pmp_state.pmp[i].cfg_reg & PMP_VIRT)) {
+                    *allowed_privs |= PMP_READ | PMP_WRITE | PMP_EXEC;
                 }
             } else {
                 /*

@@ -943,6 +943,13 @@ static void riscv_cpu_realize(DeviceState *dev, Error **errp)
         return;
     }
 
+    if (cpu->cfg.x_pmp_virt &&
+        (!tcg_enabled() || !cpu->cfg.pmp || cpu->cfg.ext_smepmp)) {
+        error_setg(errp,
+                   "x-pmp-virt requires TCG, pmp=on and smepmp=off");
+        return;
+    }
+
     riscv_cpu_register_gdb_regs_for_features(cs);
 
 #ifndef CONFIG_USER_ONLY
@@ -2605,6 +2612,7 @@ static const Property riscv_cpu_properties[] = {
 
     {.name = "mmu", .info = &prop_mmu},
     {.name = "pmp", .info = &prop_pmp},
+    DEFINE_PROP_BOOL("x-pmp-virt", RISCVCPU, cfg.x_pmp_virt, false),
     {.name = "num-pmp-regions", .info = &prop_num_pmp_regions},
 
     {.name = "priv_spec", .info = &prop_priv_spec},

@@ -1091,7 +1091,7 @@ void riscv_cpu_set_mode(CPURISCVState *env, target_ulong newpriv, bool virt_en)
  */
 static int get_physical_address_pmp(CPURISCVState *env, int *prot, hwaddr addr,
                                     int size, MMUAccessType access_type,
-                                    int mode)
+                                    int mode, bool virt)
 {
     pmp_priv_t pmp_priv;
     bool pmp_has_privs;
@@ -1102,7 +1102,7 @@ static int get_physical_address_pmp(CPURISCVState *env, int *prot, hwaddr addr,
     }
 
     pmp_has_privs = pmp_hart_has_privs(env, addr, size, 1 << access_type,
-                                       &pmp_priv, mode);
+                                       &pmp_priv, mode, virt);
     if (!pmp_has_privs) {
         *prot = 0;
         return TRANSLATE_PMP_FAIL;
@@ -1359,7 +1359,7 @@ static int get_physical_address(CPURISCVState *env, hwaddr *physical,
         int pmp_prot;
         int pmp_ret = get_physical_address_pmp(env, &pmp_prot, pte_addr,
                                                sxlen_bytes,
-                                               MMU_DATA_LOAD, PRV_S);
+                                               MMU_DATA_LOAD, PRV_S, false);
         if (pmp_ret != TRANSLATE_SUCCESS) {
             return TRANSLATE_PMP_FAIL;
         }
@@ -1821,7 +1821,8 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
 
             if (ret == TRANSLATE_SUCCESS) {
                 ret = get_physical_address_pmp(env, &prot_pmp, pa,
-                                               size, access_type, mode);
+                                               size, access_type, mode,
+                                               two_stage_lookup);
                 tlb_size = pmp_get_tlb_size(env, pa);
 
                 qemu_log_mask(CPU_LOG_MMU,
@@ -1856,7 +1857,7 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
 
         if (ret == TRANSLATE_SUCCESS) {
             ret = get_physical_address_pmp(env, &prot_pmp, pa,
-                                           size, access_type, mode);
+                                           size, access_type, mode, false);
             tlb_size = pmp_get_tlb_size(env, pa);
 
             qemu_log_mask(CPU_LOG_MMU,
