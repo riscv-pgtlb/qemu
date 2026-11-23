@@ -943,6 +943,13 @@ static void riscv_cpu_realize(DeviceState *dev, Error **errp)
         return;
     }
 
+    if (cpu->cfg.x_stage2_virt &&
+        (!tcg_enabled() || !riscv_has_ext(&cpu->env, RVH) || !cpu->cfg.mmu)) {
+        error_setg(errp,
+                   "x-stage2-virt requires TCG, H extension and MMU");
+        return;
+    }
+
     if (cpu->cfg.x_pmp_virt &&
         (!tcg_enabled() || !cpu->cfg.pmp || cpu->cfg.ext_smepmp)) {
         error_setg(errp,
@@ -2610,6 +2617,7 @@ static const Property riscv_cpu_properties[] = {
     {.name = "pmu-mask", .info = &prop_pmu_mask},
     {.name = "pmu-num", .info = &prop_pmu_num}, /* Deprecated */
 
+    DEFINE_PROP_BOOL("x-stage2-virt", RISCVCPU, cfg.x_stage2_virt, false),
     {.name = "mmu", .info = &prop_mmu},
     {.name = "pmp", .info = &prop_pmp},
     DEFINE_PROP_BOOL("x-pmp-virt", RISCVCPU, cfg.x_pmp_virt, false),

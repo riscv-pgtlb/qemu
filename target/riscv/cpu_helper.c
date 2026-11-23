@@ -1162,6 +1162,17 @@ static bool check_svukte_addr(CPURISCVState *env, vaddr addr)
     return !high_bit;
 }
 
+static bool stage2_virt_active(CPURISCVState *env,
+                               bool first_stage,
+                               bool two_stage,
+                               target_ulong pte)
+{
+    return riscv_cpu_cfg(env)->x_stage2_virt &&
+           !first_stage &&
+           two_stage &&
+           (pte & PTE_STAGE2_VIRT);
+}
+
 /*
  * get_physical_address - get the physical address for this virtual address
  *
@@ -1179,6 +1190,7 @@ static bool check_svukte_addr(CPURISCVState *env, vaddr addr)
  *                  This will already be shifted to match htval.
  * @access_type: The type of MMU access
  * @mmu_idx: Indicates current privilege level
+ * @guest_priv: Original VS/VU privilege for two-stage translation
  * @first_stage: Are we in first stage translation?
  *               Second stage is used for hypervisor guest translation
  * @two_stage: Are we going to perform two stage translation
@@ -1188,6 +1200,7 @@ static int get_physical_address(CPURISCVState *env, hwaddr *physical,
                                 int *ret_prot, vaddr addr,
                                 target_ulong *fault_pte_addr,
                                 int access_type, int mmu_idx,
+                                int guest_priv,
                                 bool first_stage, bool two_stage,
                                 bool is_debug, bool is_probe)
 {
@@ -1341,7 +1354,8 @@ static int get_physical_address(CPURISCVState *env, hwaddr *physical,
             /* Do the second stage translation on the base PTE address. */
             int vbase_ret = get_physical_address(env, &vbase, &vbase_prot,
                                                  base, NULL, MMU_DATA_LOAD,
-                                                 MMUIdx_U, false, true,
+                                                 MMUIdx_U, guest_priv,
+                                                 false, true,
                                                  is_debug, false);
 
             if (vbase_ret != TRANSLATE_SUCCESS) {
@@ -1412,6 +1426,16 @@ static int get_physical_address(CPURISCVState *env, hwaddr *physical,
 
         if (pte & (PTE_R | PTE_W | PTE_X)) {
             goto leaf;
+        }
+
+        /* Stage2Virt is valid only on G-stage leaf PTEs. */
+        if (stage2_virt_active(env, first_stage, two_stage, pte)) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                        "%s: stage2-virt set in non-leaf G-stage PTE: "
+                        "addr: 0x%" HWADDR_PRIx
+                        " pte: 0x" TARGET_FMT_lx "\n",
+                        __func__, pte_addr, pte);
+            return TRANSLATE_FAIL;
         }
 
         if (pte & (PTE_D | PTE_A | PTE_U | PTE_ATTR)) {
@@ -1522,6 +1546,11 @@ static int get_physical_address(CPURISCVState *env, hwaddr *physical,
     } else if (mode != PRV_S) {
         /* Supervisor PTE flags when not S mode */
         return TRANSLATE_FAIL;
+    }
+
+    if (stage2_virt_active(env, first_stage, two_stage, pte) &&
+        guest_priv == PRV_U) {
+        prot |= PAGE_READ | PAGE_WRITE | PAGE_EXEC;
     }
 
     if (!((prot >> access_type) & 1)) {
@@ -1664,15 +1693,18 @@ hwaddr riscv_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
     hwaddr phys_addr;
     int prot;
     int mmu_idx = riscv_env_mmu_index(&cpu->env, false);
+    int guest_priv = mmuidx_priv(mmu_idx);
 
     if (get_physical_address(env, &phys_addr, &prot, addr, NULL, 0, mmu_idx,
-                             true, env->virt_enabled, true, false)) {
+                             guest_priv, true, env->virt_enabled, true,
+                             false)) {
         return -1;
     }
 
     if (env->virt_enabled) {
         if (get_physical_address(env, &phys_addr, &prot, phys_addr, NULL,
-                                 0, MMUIdx_U, false, true, true, false)) {
+                                 0, MMUIdx_U, guest_priv, false, true, true,
+                                 false)) {
             return -1;
         }
     }
@@ -1786,7 +1818,7 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
         /* Two stage lookup */
         ret = get_physical_address(env, &pa, &prot, address,
                                    &env->guest_phys_fault_addr, access_type,
-                                   mmu_idx, true, true, false, probe);
+                                   mmu_idx, mode, true, true, false, probe);
 
         /*
          * A G-stage exception may be triggered during two state lookup.
@@ -1808,8 +1840,8 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
             im_address = pa;
 
             ret = get_physical_address(env, &pa, &prot2, im_address, NULL,
-                                       access_type, MMUIdx_U, false, true,
-                                       false, probe);
+                                       access_type, MMUIdx_U, mode, false,
+                                       true, false, probe);
 
             qemu_log_mask(CPU_LOG_MMU,
                           "%s 2nd-stage address=%" VADDR_PRIx
@@ -1847,8 +1879,8 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     } else {
         /* Single stage lookup */
         ret = get_physical_address(env, &pa, &prot, address, NULL,
-                                   access_type, mmu_idx, true, false, false,
-                                   probe);
+                                   access_type, mmu_idx, mode, true, false,
+                                   false, probe);
 
         qemu_log_mask(CPU_LOG_MMU,
                       "%s address=%" VADDR_PRIx " ret %d physical "

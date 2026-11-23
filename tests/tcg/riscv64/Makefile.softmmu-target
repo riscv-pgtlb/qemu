@@ -24,5 +24,12 @@ EXTRA_RUNS += run-test-mepc-masking
 run-test-mepc-masking: test-mepc-masking
 	$(call run-test, $<, $(QEMU) $(QEMU_OPTS)$<)
 
+stage2-virt.o: CFLAGS += -march=rv64imah -mabi=lp64
+
+EXTRA_RUNS += run-stage2-virt
+run-stage2-virt: stage2-virt
+	$(call run-test, $<, $(QEMU) $(QEMU_OPTS)$< \
+		-cpu rv64,h=true,pmp=false,x-stage2-virt=on)
+
 # We don't currently support the multiarch system tests
 undefine MULTIARCH_TESTS
